@@ -6,6 +6,9 @@ import { VitePWA } from "vite-plugin-pwa";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
+  // Deployed to https://almosthuman-ai.github.io/vocab-lookup/ — subpath must
+  // match the repo name so built asset URLs resolve correctly.
+  base: "/vocab-lookup/",
   server: {
     host: "::",
     port: 8080,
