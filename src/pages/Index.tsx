@@ -67,6 +67,15 @@ const Index = () => {
     return e.entry.replace(/^## [^\n]+/, `## ${joined} (${e.pos})`);
   };
 
+  // Did the student type exactly this entry's headword or one of its forms?
+  // Case-insensitive, trimmed. We light these rows up so the student sees
+  // their target at a glance even when fuzzy matches sit right below.
+  const isExactMatch = (e: VocabEntry, q: string): boolean => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return false;
+    return entryForms(e).some((f) => f.toLowerCase() === needle);
+  };
+
   return (
     <main className="min-h-screen bg-background">
       <div className="mx-auto max-w-2xl px-4 pb-24 pt-6 sm:pt-10">
@@ -137,18 +146,46 @@ const Index = () => {
               results.map((r, i) => {
                 const isActive =
                   selected?.word === r.word && selected?.pos === r.pos;
+                const isExact = isExactMatch(r, query);
+                const stateClass = isActive
+                  ? "bg-accent"
+                  : isExact
+                    ? "bg-primary/5 hover:bg-primary/10"
+                    : "hover:bg-muted/50";
+                const ringClass = isExact
+                  ? "ring-2 ring-inset ring-primary"
+                  : "";
                 return (
                   <li key={`${r.word}-${r.pos}-${i}`}>
                     <button
                       type="button"
                       onClick={() => handleSelect(r)}
                       aria-expanded={isActive}
-                      className={`flex w-full items-baseline justify-between gap-3 px-4 py-3 text-left transition active:bg-accent ${
-                        isActive ? "bg-accent" : "hover:bg-muted/50"
-                      }`}
+                      className={`flex w-full items-baseline justify-between gap-3 px-4 py-3 text-left transition active:bg-accent ${stateClass} ${ringClass}`}
                     >
-                      <span className="text-base font-medium text-foreground">
-                        {entryForms(r).join(" / ")}
+                      <span className="text-base text-foreground">
+                        {entryForms(r).map((f, idx, arr) => {
+                          const isMatch =
+                            f.toLowerCase() === query.trim().toLowerCase();
+                          return (
+                            <span key={`${f}-${idx}`}>
+                              <span
+                                className={
+                                  isMatch
+                                    ? "font-semibold text-primary"
+                                    : "font-medium"
+                                }
+                              >
+                                {f}
+                              </span>
+                              {idx < arr.length - 1 && (
+                                <span className="text-muted-foreground">
+                                  {" / "}
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })}
                       </span>
                       <span className="shrink-0 text-xs text-muted-foreground">
                         {r.pos}
