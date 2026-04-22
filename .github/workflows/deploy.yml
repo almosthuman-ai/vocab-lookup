@@ -14,6 +14,12 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+env:
+  # Node 20 is deprecated on GitHub Actions runners; this flips the bundled
+  # JS actions (checkout, configure-pages, upload-artifact, deploy-pages) onto
+  # Node 24 immediately so we're not relying on the June 2026 default flip.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build:
     runs-on: ubuntu-latest

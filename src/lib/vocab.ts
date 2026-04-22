@@ -12,8 +12,10 @@ export interface VocabEntry {
   aliases?: string[];
 }
 
-// Bumped v1 → v2 when aliases were added so cached clients re-fetch vocab.json.
-const STORE_KEY = "vocab-data-v2";
+// Bumped v2 → v3 after the form-distribution pass cleaned noisy aliases
+// (dropped `dos/doses` on `do`, `ares/bees/bes` on `be`, etc.) so installed
+// PWAs discard their stale IndexedDB copy and re-fetch the corrected list.
+const STORE_KEY = "vocab-data-v3";
 const VOCAB_URL = `${import.meta.env.BASE_URL}vocab.json`;
 
 const fuseOptions: IFuseOptions<VocabEntry> = {
