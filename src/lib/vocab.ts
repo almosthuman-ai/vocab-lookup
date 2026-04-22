@@ -12,11 +12,14 @@ export interface VocabEntry {
   aliases?: string[];
 }
 
-// Bumped v2 → v3 after the form-distribution pass cleaned noisy aliases
-// (dropped `dos/doses` on `do`, `ares/bees/bes` on `be`, etc.) so installed
-// PWAs discard their stale IndexedDB copy and re-fetch the corrected list.
-const STORE_KEY = "vocab-data-v3";
-const VOCAB_URL = `${import.meta.env.BASE_URL}vocab.json`;
+// One version, two uses: we bump this whenever vocab.json changes shape
+// or content. STORE_KEY invalidates IndexedDB; the ?v=N query string
+// invalidates the service worker's stale-while-revalidate cache on
+// vocab.json so installed PWAs actually fetch the new file instead of
+// reading last month's copy back out of runtime cache.
+const VOCAB_VERSION = 4;
+const STORE_KEY = `vocab-data-v${VOCAB_VERSION}`;
+const VOCAB_URL = `${import.meta.env.BASE_URL}vocab.json?v=${VOCAB_VERSION}`;
 
 const fuseOptions: IFuseOptions<VocabEntry> = {
   keys: [
