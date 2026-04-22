@@ -116,7 +116,7 @@ const Index = () => {
           <InstallPrompt />
         </div>
 
-        {/* Results list */}
+        {/* Results list (entry expands inline under the tapped word) */}
         {loadState === "ready" && query.trim().length >= 2 && (
           <ul className="mt-4 divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
             {results.length === 0 ? (
@@ -132,6 +132,7 @@ const Index = () => {
                     <button
                       type="button"
                       onClick={() => handleSelect(r)}
+                      aria-expanded={isActive}
                       className={`flex w-full items-baseline justify-between gap-3 px-4 py-3 text-left transition active:bg-accent ${
                         isActive ? "bg-accent" : "hover:bg-muted/50"
                       }`}
@@ -143,20 +144,18 @@ const Index = () => {
                         {r.pos}
                       </span>
                     </button>
+                    {isActive && selected && (
+                      <article className="border-t border-border bg-background px-4 py-4 sm:px-5 sm:py-5">
+                        <div className="entry-prose">
+                          <ReactMarkdown>{selected.entry}</ReactMarkdown>
+                        </div>
+                      </article>
+                    )}
                   </li>
                 );
               })
             )}
           </ul>
-        )}
-
-        {/* Selected entry */}
-        {selected && (
-          <article className="mt-6 rounded-xl border border-border bg-card p-5 shadow-sm sm:p-6">
-            <div className="entry-prose">
-              <ReactMarkdown>{selected.entry}</ReactMarkdown>
-            </div>
-          </article>
         )}
       </div>
     </main>
