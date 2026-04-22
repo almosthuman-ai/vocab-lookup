@@ -5,13 +5,22 @@ export interface VocabEntry {
   word: string;
   pos: string;
   entry: string;
+  // Inflected surface forms that map to this entry (e.g. say → said, says).
+  // Indexed by Fuse so a student searching "said" lands on the "say" entry,
+  // and displayed in the result list + entry header as "say / said / says"
+  // so the student sees all forms of one idea at once.
+  aliases?: string[];
 }
 
-const STORE_KEY = "vocab-data-v1";
+// Bumped v1 → v2 when aliases were added so cached clients re-fetch vocab.json.
+const STORE_KEY = "vocab-data-v2";
 const VOCAB_URL = `${import.meta.env.BASE_URL}vocab.json`;
 
 const fuseOptions: IFuseOptions<VocabEntry> = {
-  keys: ["word"],
+  keys: [
+    { name: "word", weight: 1.0 },
+    { name: "aliases", weight: 0.7 },
+  ],
   threshold: 0.35,
   ignoreLocation: true,
   minMatchCharLength: 2,
@@ -24,8 +33,19 @@ export interface LoadedVocab {
 }
 
 function buildFuse(data: VocabEntry[]): Fuse<VocabEntry> {
-  const index = Fuse.createIndex(["word"], data);
+  const index = Fuse.createIndex(["word", "aliases"], data);
   return new Fuse(data, fuseOptions, index);
+}
+
+/**
+ * All surface forms for an entry with the headword first. Used both for
+ * ranking (match query against any form) and display
+ * ("do / does / did / doing / done") so students see one idea with all
+ * its forms rather than separate entries.
+ */
+export function entryForms(entry: VocabEntry): string[] {
+  const aliases = entry.aliases ?? [];
+  return [entry.word, ...aliases];
 }
 
 export async function loadVocab(opts?: {
@@ -66,15 +86,19 @@ export function searchVocab(
 
   const lowerQ = q.toLowerCase();
 
-  // Re-rank: prefer exact, then prefix, then shorter words at equal score
+  // Re-rank: prefer exact match (on word OR any alias), then prefix, then
+  // shorter headwords at equal score. Checking aliases means typing "said"
+  // gives the "say" entry a strong exact-match bonus via its "said" alias.
   const scored = results.map((r) => {
-    const word = r.item.word.toLowerCase();
+    const forms = entryForms(r.item).map((f) => f.toLowerCase());
     let bonus = 0;
-    if (word === lowerQ) bonus -= 1.0;
-    else if (word.startsWith(lowerQ)) bonus -= 0.5;
+    if (forms.some((f) => f === lowerQ)) bonus -= 1.0;
+    else if (forms.some((f) => f.startsWith(lowerQ))) bonus -= 0.5;
     return {
       item: r.item,
-      score: (r.score ?? 0) + bonus + word.length * 0.001,
+      // Length penalty still uses headword — keeps "cat" above "catastrophe"
+      // when both exact-match (neither will, but in close ranking cases).
+      score: (r.score ?? 0) + bonus + r.item.word.length * 0.001,
     };
   });
 

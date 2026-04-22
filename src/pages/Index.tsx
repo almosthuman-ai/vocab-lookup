@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type Fuse from "fuse.js";
 import { Search, X } from "lucide-react";
-import { loadVocab, searchVocab, type VocabEntry } from "@/lib/vocab";
+import { entryForms, loadVocab, searchVocab, type VocabEntry } from "@/lib/vocab";
 import { InstallPrompt } from "@/components/InstallPrompt";
 
 type LoadState = "idle" | "loading" | "ready" | "offline-empty" | "error";
@@ -55,6 +55,16 @@ const Index = () => {
     setQuery("");
     setSelected(null);
     inputRef.current?.focus();
+  };
+
+  /**
+   * Rewrite the entry's top-of-file `## word (pos)` heading to include every
+   * form ("do / does / did / doing / done") so the student sees one idea with
+   * all its forms — not a redirect from the form they searched to the lemma.
+   */
+  const entryWithFormsHeader = (e: VocabEntry): string => {
+    const joined = entryForms(e).join(" / ");
+    return e.entry.replace(/^## [^\n]+/, `## ${joined} (${e.pos})`);
   };
 
   return (
@@ -138,16 +148,18 @@ const Index = () => {
                       }`}
                     >
                       <span className="text-base font-medium text-foreground">
-                        {r.word}
+                        {entryForms(r).join(" / ")}
                       </span>
-                      <span className="text-xs text-muted-foreground">
+                      <span className="shrink-0 text-xs text-muted-foreground">
                         {r.pos}
                       </span>
                     </button>
                     {isActive && selected && (
                       <article className="border-t border-border bg-background px-4 py-4 sm:px-5 sm:py-5">
                         <div className="entry-prose">
-                          <ReactMarkdown>{selected.entry}</ReactMarkdown>
+                          <ReactMarkdown>
+                            {entryWithFormsHeader(selected)}
+                          </ReactMarkdown>
                         </div>
                       </article>
                     )}
