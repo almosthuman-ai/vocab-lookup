@@ -12,6 +12,23 @@ export interface VocabEntry {
   aliases?: string[];
 }
 
+export interface TranslationTerm {
+  term: string;
+  section: string;
+}
+
+export interface TranslationSearchEntry {
+  entry: VocabEntry;
+  terms: TranslationTerm[];
+  index: number;
+}
+
+export interface VocabSearchResult {
+  entry: VocabEntry;
+  matchedTranslations: string[];
+  exactTranslationMatch: boolean;
+}
+
 // One version, two uses: we bump this whenever vocab.json changes shape
 // or content. STORE_KEY invalidates IndexedDB; the ?v=N query string
 // invalidates the service worker's stale-while-revalidate cache on
@@ -35,11 +52,88 @@ const fuseOptions: IFuseOptions<VocabEntry> = {
 export interface LoadedVocab {
   data: VocabEntry[];
   fuse: Fuse<VocabEntry>;
+  translationIndex: TranslationSearchEntry[];
+  translationTermsByEntry: Map<VocabEntry, TranslationTerm[]>;
 }
 
 function buildFuse(data: VocabEntry[]): Fuse<VocabEntry> {
   const index = Fuse.createIndex(["word", "aliases"], data);
   return new Fuse(data, fuseOptions, index);
+}
+
+const HAN_RE = /[\u3400-\u9fff]/u;
+const SECTION_RE = /^\*\*(.+?):\*\*\s*$/;
+const BULLET_LEAD_RE = /^-\s+(.+?)(?:\s+[—-]\s+|$)/u;
+const BOLD_RE = /\*\*([^*]+)\*\*/gu;
+
+function hasHan(text: string): boolean {
+  return HAN_RE.test(text);
+}
+
+export function isChineseQuery(text: string): boolean {
+  return hasHan(text.trim());
+}
+
+function normalizeTranslationTerm(term: string): string {
+  return term.replace(/\s+/g, " ").trim();
+}
+
+export function extractTranslationTerms(entryText: string): TranslationTerm[] {
+  const seen = new Set<string>();
+  const terms: TranslationTerm[] = [];
+  let section = "";
+
+  for (const line of entryText.split("\n")) {
+    const sectionMatch = line.match(SECTION_RE);
+    if (sectionMatch) {
+      section = sectionMatch[1];
+      continue;
+    }
+
+    if (!line.startsWith("- ")) continue;
+
+    const lead = line.match(BULLET_LEAD_RE)?.[1];
+    if (!lead) continue;
+
+    const boldTerms = [...lead.matchAll(BOLD_RE)].map((m) => m[1]);
+    const candidates = boldTerms.length ? boldTerms : [lead.replace(/\*\*/g, "")];
+
+    for (const candidate of candidates) {
+      const term = normalizeTranslationTerm(candidate);
+      if (!term || !hasHan(term)) continue;
+
+      const key = `${section}:${term}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      terms.push({ term, section });
+    }
+  }
+
+  return terms;
+}
+
+function buildTranslationIndex(data: VocabEntry[]): TranslationSearchEntry[] {
+  return data
+    .map((entry, index) => ({
+      entry,
+      terms: extractTranslationTerms(entry.entry),
+      index,
+    }))
+    .filter((item) => item.terms.length > 0);
+}
+
+export function createLoadedVocab(data: VocabEntry[]): LoadedVocab {
+  const translationIndex = buildTranslationIndex(data);
+  const translationTermsByEntry = new Map(
+    translationIndex.map((item) => [item.entry, item.terms]),
+  );
+
+  return {
+    data,
+    fuse: buildFuse(data),
+    translationIndex,
+    translationTermsByEntry,
+  };
 }
 
 /**
@@ -61,7 +155,7 @@ export async function loadVocab(opts?: {
     const cached = (await get(STORE_KEY)) as VocabEntry[] | undefined;
     if (cached && Array.isArray(cached) && cached.length > 0) {
       opts?.onSource?.("cache");
-      return { data: cached, fuse: buildFuse(cached) };
+      return createLoadedVocab(cached);
     }
   } catch {
     // ignore, fallback to network
@@ -77,16 +171,35 @@ export async function loadVocab(opts?: {
     /* ignore quota errors */
   });
 
-  return { data, fuse: buildFuse(data) };
+  return createLoadedVocab(data);
 }
 
-export function searchVocab(
+function previewTranslationTerms(terms: TranslationTerm[] = []): string[] {
+  const preferred = terms.filter((term) => term.section === "Mandarin");
+  const candidates = preferred.length ? preferred : terms;
+  return [...new Set(candidates.map((term) => term.term))].slice(0, 3);
+}
+
+function emptySearchResult(
+  entry: VocabEntry,
+  translationTermsByEntry?: Map<VocabEntry, TranslationTerm[]>,
+): VocabSearchResult {
+  return {
+    entry,
+    matchedTranslations: previewTranslationTerms(
+      translationTermsByEntry?.get(entry),
+    ),
+    exactTranslationMatch: false,
+  };
+}
+
+function searchEnglishVocab(
   fuse: Fuse<VocabEntry>,
+  translationTermsByEntry: Map<VocabEntry, TranslationTerm[]>,
   query: string,
   limit = 20,
-): VocabEntry[] {
+): VocabSearchResult[] {
   const q = query.trim();
-  if (q.length < 2) return [];
   const results = fuse.search(q, { limit: limit * 2 });
 
   const lowerQ = q.toLowerCase();
@@ -108,5 +221,85 @@ export function searchVocab(
   });
 
   scored.sort((a, b) => a.score - b.score);
-  return scored.slice(0, limit).map((s) => s.item);
+  return scored
+    .slice(0, limit)
+    .map((s) => emptySearchResult(s.item, translationTermsByEntry));
+}
+
+function sectionWeight(section: string): number {
+  if (section === "Mandarin") return 0;
+  if (section === "Also means") return 0.35;
+  if (section === "Note") return 0.75;
+  return 0.5;
+}
+
+function translationMatchScore(term: TranslationTerm, query: string): number | null {
+  if (term.term === query) return sectionWeight(term.section);
+  if (term.term.startsWith(query)) return 0.2 + sectionWeight(term.section);
+  if (query.startsWith(term.term) && term.term.length >= 2) {
+    return 0.35 + sectionWeight(term.section);
+  }
+  if (term.term.includes(query)) return 0.45 + sectionWeight(term.section);
+  if (query.includes(term.term) && term.term.length >= 2) {
+    return 0.55 + sectionWeight(term.section);
+  }
+  return null;
+}
+
+function searchTranslationVocab(
+  translationIndex: TranslationSearchEntry[],
+  query: string,
+  limit = 20,
+): VocabSearchResult[] {
+  const scored = translationIndex
+    .map((item) => {
+      const matches = item.terms
+        .map((term) => ({
+          term,
+          score: translationMatchScore(term, query),
+        }))
+        .filter((match): match is { term: TranslationTerm; score: number } => {
+          return match.score !== null;
+        })
+        .sort((a, b) => {
+          if (a.score !== b.score) return a.score - b.score;
+          return a.term.term.length - b.term.term.length;
+        });
+
+      if (matches.length === 0) return null;
+
+      const matchedTranslations = [
+        ...new Set(matches.slice(0, 3).map((match) => match.term.term)),
+      ];
+
+      return {
+        entry: item.entry,
+        matchedTranslations,
+        exactTranslationMatch: matches.some((match) => match.term.term === query),
+        score: matches[0].score + item.index * 0.000001,
+      };
+    })
+    .filter((result): result is VocabSearchResult & { score: number } => {
+      return result !== null;
+    });
+
+  scored.sort((a, b) => a.score - b.score);
+  return scored.slice(0, limit).map(({ score: _score, ...result }) => result);
+}
+
+export function searchVocab(
+  loaded: LoadedVocab,
+  query: string,
+  limit = 20,
+): VocabSearchResult[] {
+  const q = query.trim();
+  const isTranslationQuery = isChineseQuery(q);
+  if (!isTranslationQuery && q.length < 2) return [];
+  if (isTranslationQuery && q.length < 1) return [];
+
+  if (isTranslationQuery) {
+    return searchTranslationVocab(loaded.translationIndex, q, limit);
+  }
+
+  return searchEnglishVocab(loaded.fuse, loaded.translationTermsByEntry, q, limit);
 }

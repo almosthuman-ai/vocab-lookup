@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import type Fuse from "fuse.js";
 import { Search, X } from "lucide-react";
-import { entryForms, loadVocab, searchVocab, type VocabEntry } from "@/lib/vocab";
+import {
+  entryForms,
+  isChineseQuery,
+  loadVocab,
+  searchVocab,
+  type LoadedVocab,
+  type VocabEntry,
+} from "@/lib/vocab";
 import { InstallPrompt } from "@/components/InstallPrompt";
 
 type LoadState = "idle" | "loading" | "ready" | "offline-empty" | "error";
@@ -11,16 +17,16 @@ const Index = () => {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<VocabEntry | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
-  const fuseRef = useRef<Fuse<VocabEntry> | null>(null);
+  const vocabRef = useRef<LoadedVocab | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoadState("loading");
     loadVocab()
-      .then(({ fuse }) => {
+      .then((loaded) => {
         if (cancelled) return;
-        fuseRef.current = fuse;
+        vocabRef.current = loaded;
         setLoadState("ready");
       })
       .catch(() => {
@@ -37,9 +43,12 @@ const Index = () => {
   }, []);
 
   const results = useMemo(() => {
-    if (!fuseRef.current || loadState !== "ready") return [];
-    return searchVocab(fuseRef.current, query, 20);
+    if (!vocabRef.current || loadState !== "ready") return [];
+    return searchVocab(vocabRef.current, query, 20);
   }, [query, loadState]);
+  const trimmedQuery = query.trim();
+  const shouldShowResults =
+    trimmedQuery.length >= 2 || isChineseQuery(trimmedQuery);
 
   // Clear selected entry when query is cleared
   useEffect(() => {
@@ -101,8 +110,8 @@ const Index = () => {
             spellCheck={false}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Type a word…"
-            aria-label="Search English words"
+            placeholder="Type an English or Chinese word…"
+            aria-label="Search English or Chinese words"
             className="w-full rounded-2xl border-2 border-border bg-card py-4 pl-12 pr-12 text-lg text-foreground shadow-sm outline-none ring-0 transition placeholder:text-muted-foreground focus:border-primary focus:shadow-md sm:text-xl"
           />
           {query && (
@@ -136,7 +145,7 @@ const Index = () => {
         </div>
 
         {/* Results list (entry expands inline under the tapped word) */}
-        {loadState === "ready" && query.trim().length >= 2 && (
+        {loadState === "ready" && shouldShowResults && (
           <ul className="mt-4 divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
             {results.length === 0 ? (
               <li className="px-4 py-3 text-sm text-muted-foreground">
@@ -145,8 +154,10 @@ const Index = () => {
             ) : (
               results.map((r, i) => {
                 const isActive =
-                  selected?.word === r.word && selected?.pos === r.pos;
-                const isExact = isExactMatch(r, query);
+                  selected?.word === r.entry.word &&
+                  selected?.pos === r.entry.pos;
+                const isExact =
+                  isExactMatch(r.entry, query) || r.exactTranslationMatch;
                 const stateClass = isActive
                   ? "bg-accent"
                   : isExact
@@ -156,39 +167,46 @@ const Index = () => {
                   ? "ring-2 ring-inset ring-primary"
                   : "";
                 return (
-                  <li key={`${r.word}-${r.pos}-${i}`}>
+                  <li key={`${r.entry.word}-${r.entry.pos}-${i}`}>
                     <button
                       type="button"
-                      onClick={() => handleSelect(r)}
+                      onClick={() => handleSelect(r.entry)}
                       aria-expanded={isActive}
-                      className={`flex w-full items-baseline justify-between gap-3 px-4 py-3 text-left transition active:bg-accent ${stateClass} ${ringClass}`}
+                      className={`flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition active:bg-accent ${stateClass} ${ringClass}`}
                     >
-                      <span className="text-base text-foreground">
-                        {entryForms(r).map((f, idx, arr) => {
-                          const isMatch =
-                            f.toLowerCase() === query.trim().toLowerCase();
-                          return (
-                            <span key={`${f}-${idx}`}>
-                              <span
-                                className={
-                                  isMatch
-                                    ? "font-semibold text-primary"
-                                    : "font-medium"
-                                }
-                              >
-                                {f}
-                              </span>
-                              {idx < arr.length - 1 && (
-                                <span className="text-muted-foreground">
-                                  {" / "}
+                      <span className="min-w-0 flex-1 text-base text-foreground">
+                        <span className="block">
+                          {entryForms(r.entry).map((f, idx, arr) => {
+                            const isMatch =
+                              f.toLowerCase() === query.trim().toLowerCase();
+                            return (
+                              <span key={`${f}-${idx}`}>
+                                <span
+                                  className={
+                                    isMatch
+                                      ? "font-semibold text-primary"
+                                      : "font-medium"
+                                  }
+                                >
+                                  {f}
                                 </span>
-                              )}
-                            </span>
-                          );
-                        })}
+                                {idx < arr.length - 1 && (
+                                  <span className="text-muted-foreground">
+                                    {" / "}
+                                  </span>
+                                )}
+                              </span>
+                            );
+                          })}
+                        </span>
+                        {r.matchedTranslations.length > 0 && (
+                          <span className="mt-1 block text-sm font-semibold text-primary">
+                            {r.matchedTranslations.join(" / ")}
+                          </span>
+                        )}
                       </span>
                       <span className="shrink-0 text-xs text-muted-foreground">
-                        {r.pos}
+                        {r.entry.pos}
                       </span>
                     </button>
                     {isActive && selected && (
